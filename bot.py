@@ -11,7 +11,7 @@ from config.config import TOKEN
 # ============================================
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True
+intents.members = True  # PENTING: Untuk fitur welcome/leave
 
 class PutraBot(commands.Bot):
     def __init__(self):
@@ -77,7 +77,7 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="👤 **USER INFO**", value="`/avatar [user]` - Lihat avatar user\n`/userinfo [user]` - Info detail user", inline=False)
     embed.add_field(name="📊 **SERVER INFO**", value="`/serverinfo` - Info detail server", inline=False)
     embed.add_field(name="🔨 **MODERATION**", value="`/clear [jumlah]` - Hapus pesan\n`/kick [user]` - Kick member\n`/ban [user]` - Ban member", inline=False)
-    embed.add_field(name="👋 **WELCOME/LEAVE**", value="`/setwelcome [channel]` - Atur channel welcome\n`/testwelcome` - Test welcome message\n`/testleave` - Test leave notification", inline=False)
+    embed.add_field(name="👋 **WELCOME/LEAVE**", value="`/setwelcome [channel]` - Atur channel welcome\n`/resetwelcome` - Reset channel ke auto\n`/testwelcome` - Test welcome message\n`/testleave` - Test leave notification", inline=False)
     embed.add_field(name="👑 **ROLE MANAGEMENT**", value="`/createrole` - Buat role baru\n`/deleterole` - Hapus role\n`/giverole` - Beri role ke member\n`/takerole` - Ambil role dari member\n`/roleinfo` - Info role\n`/rolecolor` - Ubah warna role\n`/rolehoist` - Atur tampilan role\n`/rolemention` - Atur mention role", inline=False)
     embed.set_footer(text="Putra Corporation • Eksklusif")
     
@@ -179,14 +179,20 @@ async def serverinfo_command(interaction: discord.Interaction):
     if guild.icon:
         embed.set_thumbnail(url=guild.icon.url)
     
+    # Hitung statistik
+    total_members = len(guild.members)
     online_members = sum(1 for member in guild.members if member.status != discord.Status.offline)
+    bot_count = sum(1 for member in guild.members if member.bot)
+    human_count = total_members - bot_count
     
     embed.add_field(name="ID Server", value=guild.id, inline=True)
     embed.add_field(name="Owner", value=guild.owner.mention if guild.owner else "Unknown", inline=True)
-    embed.add_field(name="Member", value=f"{len(guild.members)} ({online_members} online)", inline=True)
+    embed.add_field(name="Member", value=f"{total_members} total ({online_members} online)", inline=True)
+    embed.add_field(name="Human/Bot", value=f"{human_count} human • {bot_count} bot", inline=True)
     embed.add_field(name="Channel", value=len(guild.channels), inline=True)
     embed.add_field(name="Role", value=len(guild.roles), inline=True)
     embed.add_field(name="Boost Level", value=guild.premium_tier, inline=True)
+    embed.add_field(name="Boost Count", value=guild.premium_subscription_count, inline=True)
     embed.add_field(name="Dibuat Pada", value=guild.created_at.strftime("%d-%m-%Y"), inline=True)
     
     await interaction.response.send_message(embed=embed)
@@ -198,13 +204,32 @@ async def serverinfo_command(interaction: discord.Interaction):
 @app_commands.describe(member="Member yang akan dikick", alasan="Alasan kick")
 @app_commands.checks.has_permissions(kick_members=True)
 async def kick_command(interaction: discord.Interaction, member: discord.Member, alasan: str = "Tidak ada alasan"):
-    await member.kick(reason=alasan)
-    embed = discord.Embed(
-        title="👢 Member Dikick!",
-        description=f"**{member.mention}** telah dikick.\n**Alasan:** {alasan}",
-        color=discord.Color.red()
-    )
-    await interaction.response.send_message(embed=embed)
+    # Validasi
+    if member == interaction.user:
+        await interaction.response.send_message("❌ Tidak bisa kick diri sendiri!", ephemeral=True)
+        return
+    
+    if member.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+        await interaction.response.send_message("❌ Tidak bisa kick member dengan role lebih tinggi!", ephemeral=True)
+        return
+    
+    try:
+        await member.kick(reason=f"Kick oleh {interaction.user.name}: {alasan}")
+        
+        embed = discord.Embed(
+            title="👢 **MEMBER DIKICK**",
+            description=f"**{member.mention}** telah dikick dari server.",
+            color=discord.Color.red()
+        )
+        embed.add_field(name="👤 Member", value=f"{member.name} ({member.id})", inline=True)
+        embed.add_field(name="👑 Oleh", value=interaction.user.mention, inline=True)
+        embed.add_field(name="📝 Alasan", value=alasan, inline=False)
+        embed.set_footer(text="Putra Corporation • Moderation")
+        
+        await interaction.response.send_message(embed=embed)
+        
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Gagal kick member: {e}", ephemeral=True)
 
 # ============================================
 # SLASH COMMAND: /ban
@@ -212,14 +237,29 @@ async def kick_command(interaction: discord.Interaction, member: discord.Member,
 @bot.tree.command(name="ban", description="Ban member dari server")
 @app_commands.describe(member="Member yang akan diban", alasan="Alasan ban")
 @app_commands.checks.has_permissions(ban_members=True)
-async def ban_command(interaction: discord.Interaction, member: discord.Member, alasan: str = "Tidak ada alasan"):
-    await member.ban(reason=alasan)
-    embed = discord.Embed(
-        title="🔨 Member Dibanned!",
-        description=f"**{member.mention}** telah dibanned.\n**Alasan:** {alasan}",
-        color=discord.Color.dark_red()
-    )
-    await interaction.response.send_message(embed=embed)
+async def ban_command(interaction: discord.Interaction, member: discord.User, alasan: str = "Tidak ada alasan"):
+    # Validasi
+    if member == interaction.user:
+        await interaction.response.send_message("❌ Tidak bisa ban diri sendiri!", ephemeral=True)
+        return
+    
+    try:
+        await interaction.guild.ban(member, reason=f"Ban oleh {interaction.user.name}: {alasan}")
+        
+        embed = discord.Embed(
+            title="🔨 **MEMBER DIBANNED**",
+            description=f"**{member.mention}** telah dibanned dari server.",
+            color=discord.Color.dark_red()
+        )
+        embed.add_field(name="👤 Member", value=f"{member.name} ({member.id})", inline=True)
+        embed.add_field(name="👑 Oleh", value=interaction.user.mention, inline=True)
+        embed.add_field(name="📝 Alasan", value=alasan, inline=False)
+        embed.set_footer(text="Putra Corporation • Moderation")
+        
+        await interaction.response.send_message(embed=embed)
+        
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Gagal ban member: {e}", ephemeral=True)
 
 # ============================================
 # ERROR HANDLING
@@ -228,12 +268,22 @@ async def ban_command(interaction: discord.Interaction, member: discord.Member, 
 async def on_app_command_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("❌ Anda tidak punya izin untuk menggunakan perintah ini!", ephemeral=True)
+    
     elif isinstance(error, app_commands.CommandOnCooldown):
         await interaction.response.send_message(f"❌ Command dalam cooldown. Coba lagi {error.retry_after:.2f} detik lagi.", ephemeral=True)
+    
     elif isinstance(error, app_commands.BotMissingPermissions):
         await interaction.response.send_message(f"❌ Bot tidak memiliki izin: {error.missing_permissions}", ephemeral=True)
+    
+    elif isinstance(error, app_commands.CommandNotFound):
+        await interaction.response.send_message("❌ Command tidak ditemukan. Gunakan `/help` untuk melihat daftar command.", ephemeral=True)
+    
+    elif isinstance(error, app_commands.TransformerError):
+        await interaction.response.send_message(f"❌ Input tidak valid: {error}", ephemeral=True)
+    
     else:
         await interaction.response.send_message(f"❌ Terjadi error: {error}", ephemeral=True)
+        print(f"Error detail: {error}")
 
 # ============================================
 # JALANKAN BOT
@@ -242,5 +292,12 @@ if __name__ == "__main__":
     if TOKEN == "MASUKKAN_TOKEN_BOT_ANDA_DISINI":
         print("❌ ERROR: Tuan belum memasukkan Token Bot!")
         print("📝 Silakan masukkan token bot di file config/config.py")
+        print("📝 Contoh: TOKEN = 'MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.ABCDEF.GhIjkLmNoPqRsTuVwXyZ'")
     else:
-        bot.run(TOKEN)
+        try:
+            print("🚀 Menjalankan bot...")
+            bot.run(TOKEN)
+        except discord.LoginFailure:
+            print("❌ ERROR: Token tidak valid! Periksa kembali token di config/config.py")
+        except Exception as e:
+            print(f"❌ ERROR: {e}")
